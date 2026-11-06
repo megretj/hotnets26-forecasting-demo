@@ -1,0 +1,194 @@
+// BgpSim: BGP Network Simulator written in Rust
+// Copyright (C) 2022-2023 Tibor Schneider <sctibor@ethz.ch>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+mod interactive;
+mod main_menu;
+mod replayer;
+
+use gloo_utils::window;
+use strum::IntoEnumIterator;
+use yew::prelude::*;
+use yewdux::prelude::*;
+
+use crate::{
+    net::Net,
+    point::Point,
+    state::{Hover, Layer, State},
+};
+use interactive::InteractivePlayer;
+use main_menu::MainMenu;
+use replayer::Replayer;
+
+#[derive(Properties, PartialEq)]
+pub struct Properties {
+    pub node_ref: NodeRef,
+}
+
+#[function_component(Header)]
+pub fn header(props: &Properties) -> Html {
+    let simple = use_selector(|state: &State| state.features().simple);
+    let blog_mode = use_selector(|state: &State| state.blog_mode());
+    let replay = use_selector(|state: &State| state.replay);
+    html! {
+        <>
+            <MainMenu node_ref={props.node_ref.clone()}/>
+            if *blog_mode {
+                <RefreshButton />
+            }
+            <div class="absolute z-10 w-full p-4 pointer-events-none flex space-x-6">
+                <div class="ml-20 flex-1 flex space-x-4">
+                    if !*simple && !*replay {
+                        <AddRouter />
+                    }
+                    <LayerSelection />
+                    if !*simple {
+                        <PrefixDisplay />
+                    }
+                </div>
+                if *replay {
+                    <Replayer />
+                } else {
+                    <InteractivePlayer />
+                }
+            </div>
+        </>
+    }
+}
+
+#[function_component(RefreshButton)]
+fn refresh_button() -> Html {
+    let class = "absolute rounded-full mt-4 ml-4 p-2 drop-shadow bg-blue text-base-1 hover:bg-blue-dark focus:bg-blue active:bg-blue-darker transition duration-150 ease-in-out";
+    let onclick = Callback::from(|_| {
+        window().location().reload().unwrap();
+    });
+
+    html! {
+        <button {class} {onclick}> <yew_lucide::RotateCw class="w-6 h-6" /> </button>
+    }
+}
+
+#[function_component(LayerSelection)]
+fn layer_selection() -> Html {
+    let button_class = "flex flex-1 w-[10.5rem] rounded-full z-10 p-2 px-4 drop-shadow bg-base-0 text-main hover:text-main transition-all duration-150 ease-in-out flex justify-between items-center pointer-events-auto";
+    let content_class = "absolute mt-2 z-10 w-[10.5rem] flex flex-col py-1 opacity-0 rounded-md drop-shadow bg-base-0 peer-checked:opacity-100 transition duration-150 ease-in-out pointer-events-none peer-checked:pointer-events-auto -translate-y-10 peer-checked:translate-y-0";
+    let bg_class = "absolute z-10 -top-4 -left-20 h-screen w-screen bg-opacity-0 peer-checked:bg-opacity-30 pointer-events-none peer-checked:pointer-events-auto cursor-default focus:outline-none transition duration-150 ease-in-out";
+
+    let shown = use_state(|| false);
+    let toggle = {
+        let shown = shown.clone();
+        Callback::from(move |_| shown.set(!*shown))
+    };
+    let hide = {
+        let shown = shown.clone();
+        Callback::from(move |_| shown.set(false))
+    };
+
+    let (state, state_dispatch) = use_store::<State>();
+    let layer = state.layer().to_string();
+
+    let layer_options = Layer::iter()
+        .map(|l| {
+            let text = l.to_string();
+            let onclick = {
+                let shown = shown.clone();
+                state_dispatch.reduce_mut_callback(move |s| {
+                    shown.set(false);
+                    s.set_layer(l);
+                })
+            };
+            let onmouseenter =
+                state_dispatch.reduce_mut_callback(move |s| s.set_hover(Hover::Help(l.help())));
+            let onmouseleave = state_dispatch.reduce_mut_callback(|s| s.clear_hover());
+            html! {
+                <button class="text-main hover:text-main hover:bg-base-2 py-2 focus:outline-none"
+                        {onclick} {onmouseenter} {onmouseleave}>
+                    {text}
+                </button>
+            }
+        })
+        .collect::<Html>();
+
+    let onmouseenter = state_dispatch.reduce_mut_callback(|s| {
+        s.set_hover(Hover::Help(html! { "Select the visualization layer" }))
+    });
+    let onmouseleave = state_dispatch.reduce_mut_callback(|s| s.clear_hover());
+
+    html! {
+        <span class="pointer-events-none" id="layer-selection">
+            <input type="checkbox" value="" class="sr-only peer" checked={*shown}/>
+            <button class={bg_class} onclick={hide}> </button>
+            <button class={button_class} onclick={toggle} {onmouseenter} {onmouseleave}> <yew_lucide::Layers class="w-5 h-5 mr-2"/> <p class="flex-1">{layer}</p> </button>
+            <div class={content_class}> {layer_options} </div>
+        </span>
+    }
+}
+
+#[function_component(AddRouter)]
+fn add_router() -> Html {
+    let button_class = "rounded-full z-10 p-2 drop-shadow bg-base-0 text-main hover:text-main transition-all duration-150 ease-in-out flex justify-between items-center pointer-events-auto";
+
+    let (_, net_dispatch) = use_store::<Net>();
+    let add_router = {
+        let net_dispatch = net_dispatch.clone();
+        move |event| {
+            net_dispatch.reduce_mut(|n| add_new_router(n, event));
+        }
+    };
+
+    html! {
+        <button class={button_class} onclick={add_router} id="add-new-router"> <yew_lucide::Plus class="w-6 h-6"/> </button>
+    }
+}
+
+fn add_new_router(net: &mut Net, event: MouseEvent) {
+    let name = (1..)
+        .map(|x| format!("R{x}"))
+        .find(|n| net.net().get_router_id(n).is_err())
+        .unwrap(); // safety: This unwrap is ok because of the infinite iterator!
+    let asn = net.last_asn;
+    let router_id = net.net_mut().add_router(name, asn);
+    // get the point of where to add the router
+    let screen_point = Point::new(event.client_x(), event.client_y() + 100);
+    let point = net.dim.screen_to_data(screen_point);
+    log::debug!("add router at {point:?}");
+    net.pos_mut().insert(router_id, point);
+}
+
+/// A static display of the demo prefix: the prefix cannot be changed, since
+/// all routes in this demo are towards a single destination.
+#[function_component]
+fn PrefixDisplay() -> Html {
+    let prefix = use_selector(|s: &State| s.prefix());
+    let state_dispatch: Dispatch<State> = Dispatch::new();
+    let onmouseenter = state_dispatch.reduce_mut_callback(|s| {
+        s.set_hover(Hover::Help(html! {
+            { "For this demo, all routes are towards a single destination." }
+        }));
+    });
+    let onmouseleave = state_dispatch.reduce_mut_callback(|s| s.clear_hover());
+    let text = match *prefix {
+        Some(p) => p.to_string(),
+        None => crate::net::demo::DEMO_PREFIX.to_string(),
+    };
+    html! {
+        <span class="pointer-events-none" id="prefix-selection" {onmouseenter} {onmouseleave}>
+            <button class="z-10 p-2 px-4 flex justify-between items-center rounded-full drop-shadow bg-base-0 text-main pointer-events-auto">
+                <p class="text-sm">{ text }</p>
+            </button>
+        </span>
+    }
+}

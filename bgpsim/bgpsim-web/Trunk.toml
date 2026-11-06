@@ -1,0 +1,25 @@
+[build]
+# The index HTML file to drive the bundling process.
+target = "index.html"
+# Build in release mode.
+release = false
+# The output dir for all final assets.
+dist = "dist"
+# The public URL from which assets are to be served. "./" makes all asset
+# references relative, so the build works when hosted at any base path
+# (e.g. a GitHub Pages project site at user.github.io/repo-name/).
+public_url = "./"
+# Whether to include hash values in the output file names.
+filehash = true
+# Minify the resulting files on release. NOTE: disabled, because trunk's
+# built-in JS minifier cannot parse the ES-module syntax (`export default`)
+# emitted by recent wasm-bindgen versions (RequiredTokenNotFound(KeywordDefault)).
+minify = "never"
+
+[watch]
+ignore = ["tailwind.css", "index.css"]
+
+[[hooks]]
+stage = "pre_build"
+command = "tailwindcss"
+command_arguments = ["-c", "tailwind.config.js", "-o", "tailwind.css"]

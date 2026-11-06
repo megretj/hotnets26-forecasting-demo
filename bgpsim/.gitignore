@@ -1,0 +1,5 @@
+target/
+dist/
+tailwind.css
+.direnv
+.envrc

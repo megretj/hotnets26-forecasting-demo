@@ -1,0 +1,209 @@
+// BgpSim: BGP Network Simulator written in Rust
+// Copyright (C) 2022-2023 Tibor Schneider <sctibor@ethz.ch>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+mod bgp_cfg;
+mod fw_policy_cfg;
+mod route_map_item_cfg;
+mod route_map_match_cfg;
+mod route_map_set_cfg;
+mod route_maps_cfg;
+mod topology_cfg;
+
+use std::rc::Rc;
+
+use bgpsim::{
+    formatter::NetworkFormatter,
+    types::{RouterId, ASN},
+};
+use yew::prelude::*;
+use yewdux::prelude::*;
+
+use crate::{
+    callback,
+    draw::SvgColor,
+    net::Net,
+    sidebar::Button,
+    state::{Selected, State},
+};
+
+use super::{Divider, Element, ExpandableDivider, Select, TextField};
+use bgp_cfg::BgpCfg;
+use topology_cfg::TopologyCfg;
+
+pub struct RouterCfg {
+    net: Rc<Net>,
+    net_dispatch: Dispatch<Net>,
+    state: Rc<State>,
+    _state_dispatch: Dispatch<State>,
+    name_input_correct: bool,
+    asn_input_correct: bool,
+}
+
+pub enum Msg {
+    StateNet(Rc<Net>),
+    State(Rc<State>),
+    OnNameChange(String),
+    OnNameSet(String),
+    OnAsnChange(String),
+    OnAsnSet(String),
+}
+
+#[derive(Properties, PartialEq, Eq)]
+pub struct Properties {
+    pub router: RouterId,
+}
+
+impl Component for RouterCfg {
+    type Message = Msg;
+    type Properties = Properties;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        let net_dispatch = Dispatch::<Net>::subscribe(ctx.link().callback(Msg::StateNet));
+        let _state_dispatch = Dispatch::<State>::subscribe(ctx.link().callback(Msg::State));
+        RouterCfg {
+            net: Default::default(),
+            net_dispatch,
+            state: Default::default(),
+            _state_dispatch,
+            name_input_correct: true,
+            asn_input_correct: true,
+        }
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let router = ctx.props().router;
+        let n = &self.net.net();
+        let r = if let Ok(r) = n.get_router(router) {
+            r
+        } else {
+            return html! {};
+        };
+
+        let name_text = router.fmt(n).to_string();
+        let on_name_change = ctx.link().callback(Msg::OnNameChange);
+        let on_name_set = ctx.link().callback(Msg::OnNameSet);
+
+        let asn_text = format!("AS{}", r.asn().0);
+        let on_asn_change = ctx.link().callback(Msg::OnAsnChange);
+        let on_asn_set = ctx.link().callback(Msg::OnAsnSet);
+
+        let disabled = self.state.replay;
+
+        html! {
+            <div class="w-full space-y-2">
+                <Divider text={format!("Router {name_text}")} />
+                <Element text={"Name"}>
+                    <TextField text={name_text} on_change={on_name_change} on_set={on_name_set} correct={self.name_input_correct} {disabled}/>
+                </Element>
+                <Element text={"AS Number"}>
+                    <TextField text={asn_text} on_change={on_asn_change} on_set={on_asn_set} correct={self.asn_input_correct} {disabled}/>
+                </Element>
+                if self.state.features().ospf {
+                    <TopologyCfg {router} {disabled}/>
+                }
+                if self.state.features().bgp {
+                    <BgpCfg {router} {disabled}/>
+                }
+                <div></div>
+                if !self.state.features().simple {
+                    <DeleteRouter {router} {disabled} />
+                }
+                <Divider />
+            </div>
+        }
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        let router = ctx.props().router;
+        match msg {
+            Msg::State(s) => {
+                let changed = self.state.features() != s.features();
+                self.state = s;
+                changed
+            }
+            Msg::OnNameChange(new_name) => {
+                self.name_input_correct = match self.net.net().get_router_id(new_name) {
+                    Err(_) => true,
+                    Ok(r) if r == router => true,
+                    Ok(_) => false,
+                };
+                true
+            }
+            Msg::OnNameSet(new_name) => {
+                self.net_dispatch
+                    .reduce_mut(move |n| n.net_mut().set_router_name(router, new_name).unwrap());
+                true
+            }
+            Msg::StateNet(n) => {
+                self.net = n;
+                true
+            }
+            Msg::OnAsnChange(new_asn) => {
+                self.asn_input_correct = new_asn
+                    .to_lowercase()
+                    .trim_start_matches("as")
+                    .parse::<u32>()
+                    .is_ok();
+                true
+            }
+            Msg::OnAsnSet(new_asn) => {
+                let new_asn = ASN::from(
+                    new_asn
+                        .to_lowercase()
+                        .trim_start_matches("as")
+                        .parse::<u32>()
+                        .unwrap(),
+                );
+                self.net_dispatch.reduce_mut(move |n| {
+                    n.net_mut().set_asn(router, new_asn).unwrap();
+                    n.last_asn = new_asn;
+                });
+                true
+            }
+        }
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct DeleteRouterProps {
+    pub router: RouterId,
+    pub disabled: Option<bool>,
+}
+
+#[function_component]
+pub fn DeleteRouter(props: &DeleteRouterProps) -> Html {
+    let router = props.router;
+    let disabled = props.disabled.unwrap_or(false);
+    let on_click = callback!(move |_| {
+        Dispatch::<Net>::new().reduce_mut(move |n| {
+            let _ = n.net_mut().remove_router(router);
+            n.pos_mut().remove(&router);
+        });
+        Dispatch::<State>::new().reduce_mut(move |s| {
+            s.set_selected(Selected::None);
+        })
+    });
+
+    html! {
+        <ExpandableDivider text={String::from("Delete this router")}>
+            <div class="w-full flex flex-row">
+                <div class="flex-1">{"Are you sure?"}</div>
+                <Button text="Delete" color={SvgColor::RedLight} {on_click} full={false} {disabled}/>
+            </div>
+        </ExpandableDivider>
+    }
+}

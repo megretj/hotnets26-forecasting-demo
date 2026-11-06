@@ -1,0 +1,7 @@
+node_modules/
+DESIGN.md
+bgpsim/bgpsim-web/dist/
+
+# generated map data (upstream build.rs output; the map component was removed)
+bgpsim/bgpsim-web/maps/
+AGENTS.md

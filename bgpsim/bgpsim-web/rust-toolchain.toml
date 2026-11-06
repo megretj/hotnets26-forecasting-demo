@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned to a nightly from the project era: newer rustc versions reject the
+# `anymap` crate (E0804, hard error since ~1.88), which is pulled in by
+# yewdux. Combined with the MSRV-fallback resolver (.cargo/config.toml),
+# cargo resolves dependency versions compatible with this rustc.
+channel = "nightly-2024-12-01"

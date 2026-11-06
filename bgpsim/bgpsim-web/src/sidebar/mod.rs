@@ -1,0 +1,189 @@
+// BgpSim: BGP Network Simulator written in Rust
+// Copyright (C) 2022-2023 Tibor Schneider <sctibor@ethz.ch>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+pub mod button;
+pub mod divider;
+pub mod element;
+pub mod help;
+pub mod multi_select;
+pub mod queue_cfg;
+pub mod replay_cfg;
+pub mod router_cfg;
+pub mod select;
+pub mod text_field;
+pub mod toggle;
+
+pub use button::Button;
+pub use divider::{Divider, ExpandableDivider, ExpandableSection};
+pub use element::Element;
+pub use help::Help;
+pub use multi_select::MultiSelect;
+pub use select::Select;
+pub use text_field::TextField;
+pub use toggle::Toggle;
+
+use gloo_events::EventListener;
+use gloo_utils::window;
+use queue_cfg::QueueCfg;
+use replay_cfg::ReplayCfg;
+use router_cfg::RouterCfg;
+
+use yew::prelude::*;
+use yewdux::prelude::*;
+
+use crate::state::{Selected, State};
+
+const SMALL_WIDTH: f64 = 1000.0;
+
+#[function_component]
+pub fn Sidebar() -> Html {
+    let state =
+        use_selector(|state: &State| (state.selected(), state.small_mode, state.sidebar_shown));
+
+    log::debug!("render Sidebar");
+
+    let content = match state.0 {
+        Selected::None | Selected::CreateConnection(_, _, _) => html! {
+            <div class="h-full w-full flex flex-col justify-center items-center">
+                <p class="text-main-ia italic"> { "nothing selected!" } </p>
+            </div>
+        },
+        Selected::Router(r, _) => html! { <RouterCfg router={r} /> },
+        Selected::Queue => html! { <QueueCfg /> },
+        Selected::Replay => html! { <ReplayCfg /> },
+    };
+
+    // The sidebar consists of two disjoint boxes: the top box shows the
+    // configuration of the selected element, the bottom box (slightly
+    // larger) always shows the forecast. Each box has a vertical title on
+    // its left, rotated 90° anticlockwise and anchored at the south west.
+    let content_with_forecast = html! {
+        <>
+            <div class="flex-1 min-h-0 flex flex-row gap-1 min-h-0">
+                <SidebarTitle label={"Configuration"} />
+                <div class="flex-1 min-w-0 bg-base-0 shadow-lg rounded-lg overflow-hidden">
+                    <div class="w-full h-full overflow-y-auto" id="sidebar-config">
+                        { content }
+                    </div>
+                </div>
+            </div>
+            <div class="h-[55%] shrink-0 flex flex-row gap-1 min-h-0">
+                <SidebarTitle label={"Forecast"} />
+                <div class="flex-1 min-w-0 bg-base-0 shadow-lg rounded-lg overflow-hidden" id="forecast">
+                    <crate::forecast::ForecastTab />
+                </div>
+            </div>
+        </>
+    };
+
+    let _ = use_effect(|| {
+        // compute it once
+        let win = window();
+        let width = win.inner_width().unwrap().as_f64().unwrap();
+        let small_mode = width < SMALL_WIDTH;
+        Dispatch::<State>::new().reduce_mut(move |state| state.small_mode = small_mode);
+    });
+
+    let _onresize = use_memo(
+        move |()| {
+            EventListener::new(&window(), "resize", move |_| {
+                let win = window();
+                let width = win.inner_width().unwrap().as_f64().unwrap();
+                let small_mode = width < SMALL_WIDTH;
+                Dispatch::<State>::new().reduce_mut(move |state| {
+                    if state.small_mode != small_mode {
+                        state.small_mode = small_mode;
+                        state.sidebar_shown = false;
+                    }
+                });
+            })
+        },
+        (),
+    );
+
+    if state.1 {
+        let base_class = "absolute z-10 h-full w-[28rem] top-0 right-0 pt-4 pb-4 pr-4 transition duration-300 ease-in-out pointer-events-auto";
+        let (class, onclick_2) = if state.2 {
+            // sidebar is shown. Display the thing normally (without moving it out of the way),
+            // and remove the onclick callback.
+            (classes!(base_class), None)
+        } else {
+            // Sidebar is hidden. Move the sidebar out of the view, and set the onclick callback to
+            // open the sidebar
+            (
+                classes!(base_class, "translate-x-[24rem]"),
+                Some(
+                    Dispatch::<State>::new()
+                        .reduce_mut_callback(|state| state.sidebar_shown = !state.sidebar_shown),
+                ),
+            )
+        };
+
+        let onclick = Dispatch::<State>::new()
+            .reduce_mut_callback(|state| state.sidebar_shown = !state.sidebar_shown);
+
+        html! {
+            <>
+                <div class="w-[4.5rem] h-full max-h-full pl-3 pr-6 align-middle overflow-auto"></div>
+                <div class="absolute w-full h-full overflow-hidden pointer-events-none">
+                    <div {class}>
+                        <div class="w-full max-h-full h-full p-1 flex flex-col gap-3 overflow-hidden" id="sidebar">
+                            <div class="flex-1 min-h-0 w-full flex flex-col overflow-hidden" onclick={onclick_2}>
+                                { content_with_forecast }
+                            </div>
+                            <div class="absolute bottom-8 -left-5 rounded-full p-2 bg-blue drop-shadow-lg text-base-1 cursor-pointer" {onclick}>
+                                if state.2 {
+                                    <yew_lucide::ChevronRight class="w-6 h-6" />
+                                } else {
+                                    <yew_lucide::ChevronLeft class="w-6 h-6" />
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </>
+        }
+    } else {
+        html! {
+            <div class="w-[30rem] h-full max-h-full pl-3 pr-6 pt-4 pb-8 align-middle overflow-auto">
+                <div class="w-full h-full max-h-full p-1 flex flex-col gap-3 overflow-hidden" id="sidebar">
+                    { content_with_forecast }
+                </div>
+            </div>
+        }
+    }
+}
+
+/// A vertical title of one of the sidebar boxes: light gray, large text,
+/// rotated 90° anticlockwise (reading bottom-to-top) and anchored at the
+/// south west of the box.
+#[derive(Properties, PartialEq)]
+struct SidebarTitleProps {
+    label: &'static str,
+}
+
+#[function_component]
+fn SidebarTitle(props: &SidebarTitleProps) -> Html {
+    html! {
+        <div class="shrink-0 w-7 flex flex-col justify-end items-center overflow-hidden">
+            <span class="text-3xl font-light text-base-4 select-none whitespace-nowrap"
+                  style="writing-mode: vertical-rl; transform: rotate(180deg);">
+                { props.label }
+            </span>
+        </div>
+    }
+}
